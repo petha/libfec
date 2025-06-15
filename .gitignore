@@ -107,3 +107,7 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Remve temopary files and tildes 
+*.tmp
+*~
