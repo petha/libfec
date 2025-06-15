@@ -23,7 +23,7 @@ struct v29 {
 };
 
 /* Initialize Viterbi decoder for start of new frame */
-int init_viterbi29_port(void *p,int starting_state){
+int init_viterbi29(void *p,int starting_state){
   struct v29 *vp = p;
   int i;
 
@@ -39,7 +39,7 @@ int init_viterbi29_port(void *p,int starting_state){
   return 0;
 }
 
-void set_viterbi29_polynomial_port(int polys[2]){
+void set_viterbi29_polynomial(int polys[2]){
   int state;
 
   for(state=0;state < 128;state++){
@@ -51,12 +51,12 @@ void set_viterbi29_polynomial_port(int polys[2]){
 
 
 /* Create a new instance of a Viterbi decoder */
-void *create_viterbi29_port(int len){
+void *create_viterbi29(int len){
   struct v29 *vp;
 
   if(!Init){
     int polys[2] = {V29POLYA,V29POLYB};
-    set_viterbi29_polynomial_port(polys);
+    set_viterbi29_polynomial(polys);
   }
   if((vp = (struct v29 *)malloc(sizeof(struct v29))) == NULL)
     return NULL;
@@ -65,14 +65,14 @@ void *create_viterbi29_port(int len){
     free(vp);
     return NULL;
   }
-  init_viterbi29_port(vp,0);
+  init_viterbi29(vp,0);
 
   return vp;
 }
 
 
 /* Viterbi chainback */
-int chainback_viterbi29_port(
+int chainback_viterbi29(
       void *p,
       unsigned char *data, /* Decoded output data */
       unsigned int nbits, /* Number of data bits */
@@ -105,7 +105,7 @@ int chainback_viterbi29_port(
 
 
 /* Delete instance of a Viterbi decoder */
-void delete_viterbi29_port(void *p){
+void delete_viterbi29(void *p){
   struct v29 *vp = p;
 
   if(vp != NULL){
@@ -135,7 +135,7 @@ unsigned int metric,m0,m1,decision;\
  * of symbols!
  */
 
-int update_viterbi29_blk_port(void *p,unsigned char *syms,int nbits){
+int update_viterbi29_blk(void *p,unsigned char *syms,int nbits){
   struct v29 *vp = p;
   decision_t *d;
 

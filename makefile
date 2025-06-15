@@ -2,18 +2,18 @@
 # Copyright 2004 Phil Karn, KA9Q
 # May be used under the terms of the GNU Lesser General Public License (LGPL)
 
-# @configure_input@
-srcdir = @srcdir@
-prefix = @prefix@
-exec_prefix = @exec_prefix@
-datarootdir = @datarootdir@
-VPATH = @srcdir@
-CC=@CC@
-AR = @AR@
-RANLIB = @RANLIB@
-LDFLAGS = @LDFLAGS@
+# makefile.  Generated from makefile.in by configure.
+srcdir = .
+prefix = /usr/local
+exec_prefix = ${prefix}
+datarootdir = ${prefix}/share
 
-LIBS = @MLIBS@ fec.o sim.o \
+CC=clang
+AR = ar
+RANLIB = ranlib
+LDFLAGS = 
+
+LIBS =  fec.o sim.o \
 	viterbi27_port.o viterbi29_port.o viterbi39_port.o viterbi615_port.o \
 	encode_rs_char.o encode_rs_int.o encode_rs_8.o \
 	decode_rs_char.o decode_rs_int.o decode_rs_8.o \
@@ -21,9 +21,9 @@ LIBS = @MLIBS@ fec.o sim.o \
 	ccsds_tab.o encode_rs_ccsds.o decode_rs_ccsds.o ccsds_tal.o \
 	dotprod_port.o peakval_port.o sumsq_port.o
 
-CFLAGS=@CFLAGS@ -I. -fPIC -Wall -O3 -march=native -mtune=native -ffast-math -funroll-loops
+CFLAGS=-g -O2 -I. -fPIC -Wall -O3 -march=native -mtune=native -ffast-math -funroll-loops
 
-SHARED_LIB=@SH_LIB@
+SHARED_LIB=libfec.dylib
 
 all: libfec.a $(SHARED_LIB)
 
@@ -38,77 +38,21 @@ test: vtest27 vtest29 vtest39 vtest615 rstest  rs_speedtest
 	@echo "Tests finished."
 
 install: all
-<<<<<<< Updated upstream
-	mkdir -p @libdir@ 
-	install -m 644 -p $(SHARED_LIB) libfec.a @libdir@
-#	(cd @libdir@;ln -f -s $(SHARED_LIB) libfec.so)
-	@REBIND@
-	mkdir -p @includedir@
-	install -m 644 -p fec.h @includedir@
-	mkdir -m 0755 -p @mandir@/man3
-	install -m 644 -p simd-viterbi.3 rs.3 dsp.3 @mandir@/man3
+	mkdir -p $(DESTDIR)${exec_prefix}/lib
+	install -m 644 -p $(SHARED_LIB) libfec.a $(DESTDIR)${exec_prefix}/lib
+	
+	mkdir -p $(DESTDIR)${prefix}/include
+	install -m 644 -p fec.h $(DESTDIR)${prefix}/include
+	mkdir -p $(DESTDIR)${datarootdir}/man/man3
+	install -m 644 -p simd-viterbi.3 rs.3 dsp.3 $(DESTDIR)${datarootdir}/man/man3
 
-peaktest: peaktest.o libfec.a
-	gcc -g -o $@ $^
-
-sumsq_test: sumsq_test.o libfec.a
-	gcc -g -o $@ $^
-
-dtest: dtest.o libfec.a
-	gcc -g -o $@ $^ -lm
-
-vtest27: vtest27.o libfec.a
-	gcc -g -o $@ $^ -lm
-
-vtest29: vtest29.o libfec.a
-	gcc -g -o $@ $^ -lm
-
-vtest39: vtest39.o libfec.a
-	gcc -g -o $@ $^ -lm
-
-vtest615: vtest615.o libfec.a
-	gcc -g -o $@ $^ -lm
-
-rstest: rstest.o libfec.a
-	gcc -g -o $@ $^
-
-rs_speedtest: rs_speedtest.o libfec.a
-	gcc -g -o $@ $^	
-
-# for some reason, the test programs without args segfault on the PPC with -O2 optimization. Dunno why - compiler bug?
-vtest27.o: vtest27.c fec.h
-	gcc -g -c $<
-
-vtest29.o: vtest29.c fec.h
-	gcc -g -c $<
-
-vtest39.o: vtest39.c fec.h
-	gcc -g -c $<
-
-vtest615.o: vtest615.c fec.h
-	gcc -g -c $<
-
-=======
-	mkdir -p $(DESTDIR)@libdir@
-	install -m 644 -p $(SHARED_LIB) libfec.a $(DESTDIR)@libdir@
-	@REBIND@
-	mkdir -p $(DESTDIR)@includedir@
-	install -m 644 -p fec.h $(DESTDIR)@includedir@
-	mkdir -p $(DESTDIR)@mandir@/man3
-	install -m 644 -p simd-viterbi.3 rs.3 dsp.3 $(DESTDIR)@mandir@/man3
-
->>>>>>> Stashed changes
 libfec.a: $(LIBS)
 	$(AR) rv $@ $^
 	$(RANLIB) $@
 
 # For Darwin (macOS)
 libfec.dylib: $(LIBS)
-<<<<<<< Updated upstream
-	$(CC) -dynamiclib -install_name $@ -o $@ $^
-=======
-	$(CC) $(LDFLAGS) -dynamiclib -install_name @libdir@/$@ -o $@ $^
->>>>>>> Stashed changes
+	$(CC) $(LDFLAGS) -dynamiclib -install_name ${exec_prefix}/lib/$@ -o $@ $^
 
 # For Linux et al
 libfec.so: $(LIBS)
@@ -130,19 +74,6 @@ ccsds_tal.o: ccsds_tal.c fec.h
 ccsds_tal.c: gen_ccsds_tal
 	./gen_ccsds_tal > $@
 
-<<<<<<< Updated upstream
-exercise_char.o: exercise.c
-	gcc $(CFLAGS) -c -o $@ $<
-
-exercise_int.o: exercise.c
-	gcc -DBIGSYM=1 $(CFLAGS) -c -o $@ $<
-
-exercise_8.o: exercise.c
-	gcc -DFIXED=1 $(CFLAGS) -c -o $@ $<
-
-exercise_ccsds.o: exercise.c
-	gcc -DCCSDS=1 $(CFLAGS) -c -o $@ $<
-=======
 gen_ccsds_tal: gen_ccsds_tal.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
@@ -155,7 +86,6 @@ vtest29: vtest29.o libfec.a
 
 vtest39: vtest39.o libfec.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm
->>>>>>> Stashed changes
 
 vtest615: vtest615.o libfec.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm

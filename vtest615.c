@@ -20,11 +20,6 @@ struct option Options[] = {
   {"ebn0",1,NULL,'e'},
   {"gain",1,NULL,'g'},
   {"verbose",0,NULL,'v'},
-  {"force-altivec",0,NULL,'a'},
-  {"force-port",0,NULL,'p'},
-  {"force-mmx",0,NULL,'m'},
-  {"force-sse",0,NULL,'s'},
-  {"force-sse2",0,NULL,'t'},
   {NULL},
 };
 #endif
@@ -62,21 +57,6 @@ int main(int argc,char *argv[]){
   while((d = getopt(argc,argv,"l:n:te:g:vapmst")) != EOF){
 #endif
     switch(d){
-    case 'a':
-      Cpu_mode = ALTIVEC;
-      break;
-    case 'p':
-      Cpu_mode = PORT;
-      break;
-    case 'm':
-      Cpu_mode = MMX;
-      break;
-    case 's':
-      Cpu_mode = SSE;
-      break;
-    case 't':
-      Cpu_mode = SSE2;
-      break;
     case 'l':
       framebits = atoi(optarg);
       break;

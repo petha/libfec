@@ -5,7 +5,7 @@
  * May be used under the terms of the GNU Lesser General Public License (LGPL)
  */
 
-unsigned long long sumsq_port(signed short *in,int cnt){
+unsigned long long sumsq(signed short *in,int cnt){
   long long sum = 0;
   int i;
 

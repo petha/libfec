@@ -3,7 +3,7 @@
  */
 #include <stdlib.h>
 #include "fec.h"
-int peakval_port(signed short *b,int len){
+int peakval(signed short *b,int len){
   int peak = 0;
   int a,i;
 

@@ -24,12 +24,12 @@ struct v615 {
 };
 
 /* Create a new instance of a Viterbi decoder */
-void *create_viterbi615_port(int len){
+void *create_viterbi615(int len){
   struct v615 *vp;
 
   if(!Init){
     int polys[6] = { V615POLYA,V615POLYB,V615POLYC,V615POLYD,V615POLYE,V615POLYF };
-    set_viterbi615_polynomial_port(polys);
+    set_viterbi615_polynomial(polys);
   }
   if((vp = (struct v615 *)malloc(sizeof(struct v615))) == NULL)
     return NULL;
@@ -41,7 +41,7 @@ void *create_viterbi615_port(int len){
   return vp;
 }
 
-void set_viterbi615_polynomial_port(int polys[6]){
+void set_viterbi615_polynomial(int polys[6]){
   int state;
   int i;
 
@@ -53,7 +53,7 @@ void set_viterbi615_polynomial_port(int polys[6]){
 }
 
 /* Initialize Viterbi decoder for start of new frame */
-int init_viterbi615_port(void *p,int starting_state){
+int init_viterbi615(void *p,int starting_state){
   struct v615 *vp = p;
   int i;
 
@@ -70,7 +70,7 @@ int init_viterbi615_port(void *p,int starting_state){
 }
 
 /* Viterbi chainback */
-int chainback_viterbi615_port(
+int chainback_viterbi615(
       void *p,
       unsigned char *data, /* Decoded output data */
       unsigned int nbits, /* Number of data bits */
@@ -99,7 +99,7 @@ int chainback_viterbi615_port(
 }
 
 /* Delete instance of a Viterbi decoder */
-void delete_viterbi615_port(void *p){
+void delete_viterbi615(void *p){
   struct v615 *vp = p;
 
   if(vp != NULL){
@@ -129,7 +129,7 @@ unsigned long metric,m0,m1,m2,m3,decision0,decision1;\
  * of symbols!
  */
 
-int update_viterbi615_blk_port(void *p,unsigned char *syms,int nbits){
+int update_viterbi615_blk(void *p,unsigned char *syms,int nbits){
   struct v615 *vp = p;
   void *tmp;
   decision_t *d;
