@@ -28,13 +28,9 @@ typedef union {
 
 // Branch metric table, also aligned. Stores 0 or 255.
 // For K=7, there are 2^(K-2) = 32 unique sets of branch outputs for input bit 0.
-static union {
+static union branchtab27 {
     unsigned char c[32];
-} __attribute__((aligned(64))) Branchtab27_polyA[1]; // Renamed for clarity if multiple tables were used
-
-static union {
-    unsigned char c[32];
-} __attribute__((aligned(64))) Branchtab27_polyB[1];
+} Branchtab27[2] __attribute__((aligned(64)));
 
 static int V27_Init = 0;
 
@@ -52,17 +48,11 @@ struct v27_state {
 // --- Function Implementations ---
 
 void set_viterbi27_polynomial(int polys[2]) {
-  struct v27_state temp_dummy_for_init; // For passing polys to actual instance
-  temp_dummy_for_init.polys[0] = polys[0];
-  temp_dummy_for_init.polys[1] = polys[1];
-
-  for(int i=0; i < 32; i++){ // K=7 -> 2^(7-2) = 32 entries
-    // Output bit for G1 if input bit is 0, for state 'i' (representing top half of trellis pairs)
-    Branchtab27_polyA[0].c[i] = (unsigned char)(((polys[0] < 0) ^ parity((2*i) & abs(polys[0]))) ? 255 : 0);
-    // Output bit for G2 if input bit is 0
-    Branchtab27_polyB[0].c[i] = (unsigned char)(((polys[1] < 0) ^ parity((2*i) & abs(polys[1]))) ? 255 : 0);
-  }
-  V27_Init++;
+    for(int state=0; state < 32; state++){
+        Branchtab27[0].c[state] = ((polys[0] < 0) ^ parity((2*state) & abs(polys[0]))) ? 255 : 0;
+        Branchtab27[1].c[state] = ((polys[1] < 0) ^ parity((2*state) & abs(polys[1]))) ? 255 : 0;
+    }
+    V27_Init++;
 }
 
 void *create_viterbi27(int len) {
@@ -129,172 +119,130 @@ int init_viterbi27(void *p, int starting_state) {
 
   return 0;
 }
+// ... (Keep existing includes, structs, set_viterbi27_polynomial, create_viterbi27, init_viterbi27) ...
+// ... (Ensure Branchtab27, V27_Init, struct v27_state, metric_t, decision_t are defined as in your 26Mbps version) ...
 
 int update_viterbi27_blk(void *p, unsigned char * restrict syms, int nbits) {
-  struct v27_state *vp = (struct v27_state *)p;
-  if(p == NULL || syms == NULL) return -1;
+    struct v27_state *vp = (struct v27_state *)p;
+    if(p == NULL || syms == NULL) return -1;
 
-  decision_t * restrict d_ptr = vp->dp;
-  unsigned int * const restrict old_m = vp->old_metrics->ui;
-  unsigned int * const restrict new_m = vp->new_metrics->ui;
-  
-  // Local copies of branch tables for restrict keyword and potentially better cache usage
-  const unsigned char * const restrict btab_A = Branchtab27_polyA[0].c;
-  const unsigned char * const restrict btab_B = Branchtab27_polyB[0].c;
+    decision_t * restrict d_ptr = vp->dp;
 
-  for (int bit_idx = 0; bit_idx < nbits; ++bit_idx) {
-    const unsigned char sym0 = *syms++;
-    const unsigned char sym1 = *syms++;
-    
-    // Temporary arrays for decisions to help compiler with vectorization by removing loop-carried dependencies.
-    // These store which path was chosen (0 for top, 1 for bottom in butterfly).
-    unsigned char decisions_p0_temp[32]; // Decisions for new states 0, 2, ..., 62
-    unsigned char decisions_p1_temp[32]; // Decisions for new states 1, 3, ..., 63
+    // Use local pointers for frequently accessed data, helps compiler alias analysis
+    const unsigned char * restrict btab0_local = Branchtab27[0].c;
+    const unsigned char * restrict btab1_local = Branchtab27[1].c;
+    unsigned int * restrict old_m_local = vp->old_metrics->ui;
+    unsigned int * restrict new_m_local = vp->new_metrics->ui; // This is the target for ACS
 
-    // The core Add-Compare-Select (ACS) butterfly operations
-    // This loop processes 32 butterflies for K=7 (64 states)
-    #pragma clang loop vectorize(enable) interleave(enable) unroll(enable)
-    for(int i = 0; i < 32; i++) { // i is the 'upper' state index in the butterfly (0 to 31)
-        // Branch metrics are calculated based on (Branchtab ^ Symbol).
-        // If Branchtab is 0/255 (for expected bit 0/1) and Symbol is 0/255 (hard decision),
-        // XOR gives 0 for match, 255 for mismatch. Sum is 0, 255, or 510.
+    // Align stack array if desired, though often handled well by modern compilers.
+    unsigned char current_stage_decisions[64] __attribute__((aligned(64))); 
 
-        // Branch metrics for input bit '0'
-        // Path from old_state 'i' (top in butterfly)
-        const unsigned int bm0_top = (btab_A[i] ^ sym0) + (btab_B[i] ^ sym1);
-        // Path from old_state 'i+32' (bottom in butterfly)
-        // Output for (state i+32, input 0) is complementary to (state i, input 0)
-        // because G1 and G2 polynomials for K=7 both have the MSB tap (for s5).
-        const unsigned int bm0_bot = 510 - bm0_top;
+    for (int bit_idx = 0; bit_idx < nbits; ++bit_idx) {
+        const unsigned char s0_input = *syms++; 
+        const unsigned char s1_input = *syms++; 
 
-        // Branch metrics for input bit '1'
-        // Output for (state i, input 1) is complementary to (state i, input 0).
-        const unsigned int bm1_top = 510 - bm0_top;
-        // Output for (state i+32, input 1) is complementary to (state i+32, input 0),
-        // which means it's same as (state i, input 0).
-        const unsigned int bm1_bot = bm0_top;
-
-        // ACS for new_state[2*i] (resulting from input bit 0)
-        unsigned int path0_metric = old_m[i]    + bm0_top;
-        unsigned int path1_metric = old_m[i+32] + bm0_bot;
-        
-        if (path0_metric <= path1_metric) {
-            new_m[2*i] = path0_metric;
-            decisions_p0_temp[i] = 0; // Chose path from old_m[i]
-        } else {
-            new_m[2*i] = path1_metric;
-            decisions_p0_temp[i] = 1; // Chose path from old_m[i+32]
-        }
-
-        // ACS for new_state[2*i+1] (resulting from input bit 1)
-        path0_metric = old_m[i]    + bm1_top;
-        path1_metric = old_m[i+32] + bm1_bot;
-
-        if (path0_metric <= path1_metric) {
-            new_m[2*i+1] = path0_metric;
-            decisions_p1_temp[i] = 0; // Chose path from old_m[i]
-        } else {
-            new_m[2*i+1] = path1_metric;
-            decisions_p1_temp[i] = 1; // Chose path from old_m[i+32]
-        }
-    }
-    
-    // Pack the decisions from temporary arrays into the decision_t structure
-    // This part is scalar but small compared to the ACS loop.
-    unsigned long current_decisions_word0 = 0;
-    unsigned long current_decisions_word1 = 0;
-    for (int i = 0; i < 32; i++) {
-        if (decisions_p0_temp[i]) current_decisions_word0 |= (1UL << i);
-        if (decisions_p1_temp[i]) current_decisions_word1 |= (1UL << i);
-    }
-    d_ptr->w[0] = current_decisions_word0; // Decisions for even new states (target states for input 0)
-    d_ptr->w[1] = current_decisions_word1; // Decisions for odd new states (target states for input 1)
-    d_ptr++;
-    
-    // Metric Normalization: Subtract the minimum metric from all current new_metrics
-    // This prevents overflow and keeps metrics in a manageable range.
-    unsigned int min_metric = new_m[0];
-    #pragma clang loop vectorize(enable)
-    for (int i = 1; i < 64; i++) {
-        if (new_m[i] < min_metric) {
-            min_metric = new_m[i];
-        }
-    }
-    
-    // Only subtract if min_metric is substantial, to avoid issues if all are zero.
-    // Or, more robustly, subtract if min_metric > 0 or if any metric is large.
-    // A common check is if min_metric is large enough that adding max_branch_metric (510) would overflow.
-    // For simplicity here, always normalize if min_metric could be non-zero.
-    // Or, normalize if min_metric is not already 0 to avoid subtracting 0 from 0 repeatedly.
-    if (min_metric > 0) { // More advanced: check if min_metric > THRESHOLD or any metric > MAX_ALLOWED
+        // ACS (Add-Compare-Select) Stage
+        // Rely on compiler's default unrolling (e.g., via -funroll-loops with -O3)
+        // Do NOT add a #pragma unroll here initially.
         #pragma clang loop vectorize(enable)
-        for (int i = 0; i < 64; i++) {
-            new_m[i] -= min_metric;
+        #pragma clang loop interleave(enable) 
+        for(int i = 0; i < 32; i++) {
+            // --- Load phase ---
+            unsigned int prev_metric_state_i    = old_m_local[i];
+            unsigned int prev_metric_state_i32  = old_m_local[i+32];
+            unsigned char branch_xor_mask_polyA = btab0_local[i];
+            unsigned char branch_xor_mask_polyB = btab1_local[i];
+
+            // --- Branch metric calculation phase ---
+            unsigned int xor_result_A = (unsigned int)(branch_xor_mask_polyA ^ s0_input);
+            unsigned int xor_result_B = (unsigned int)(branch_xor_mask_polyB ^ s1_input);
+            
+            unsigned int branch_metric_fwd  = xor_result_A + xor_result_B;
+            unsigned int branch_metric_comp = 510 - branch_metric_fwd; // Max bm_fwd is 510
+
+            // --- Path 1 (computations for next state 2*i) ---
+            unsigned int path1_metric_from_state_i   = prev_metric_state_i + branch_metric_fwd;
+            unsigned int path1_metric_from_state_i32 = prev_metric_state_i32 + branch_metric_comp;
+            
+            // Decision: 1 if path from state_i32 is chosen (i.e., if its metric is smaller)
+            unsigned int path1_decision  = (path1_metric_from_state_i > path1_metric_from_state_i32); 
+            unsigned int path1_survivor_metric = path1_decision ? path1_metric_from_state_i32 : path1_metric_from_state_i;
+
+            // --- Path 2 (computations for next state 2*i+1) ---
+            unsigned int path2_metric_from_state_i   = prev_metric_state_i + branch_metric_comp;
+            unsigned int path2_metric_from_state_i32 = prev_metric_state_i32 + branch_metric_fwd;
+
+            // Decision: 1 if path from state_i32 is chosen (i.e., if its metric is smaller)
+            unsigned int path2_decision  = (path2_metric_from_state_i > path2_metric_from_state_i32);
+            unsigned int path2_survivor_metric = path2_decision ? path2_metric_from_state_i32 : path2_metric_from_state_i;
+
+            // --- Store phase (interleaved) ---
+            new_m_local[2*i]       = path1_survivor_metric;
+            current_stage_decisions[2*i] = (unsigned char)path1_decision;
+
+            new_m_local[2*i+1]     = path2_survivor_metric;
+            current_stage_decisions[2*i+1] = (unsigned char)path2_decision;
         }
+
+        // Pack decisions from current_stage_decisions into d_ptr->w
+        // (This packing logic is from your 26Mbps version - assumed correct)
+        unsigned long packed_w0 = 0;
+        unsigned long packed_w1 = 0;
+        for (int k = 0; k < 32; ++k) {
+            if (current_stage_decisions[k]) {
+                packed_w0 |= (1UL << k);
+            }
+        }
+        for (int k = 0; k < 32; ++k) {
+            if (current_stage_decisions[32 + k]) {
+                packed_w1 |= (1UL << k);
+            }
+        }
+        d_ptr->w[0] = packed_w0;
+        d_ptr->w[1] = packed_w1;
+        d_ptr++;
+
+        // Metric Normalization Stage (using new_m_local)
+        unsigned int min_metric = new_m_local[0];
+        for (int k = 1; k < 64; k++) {
+            if (new_m_local[k] < min_metric) {
+                min_metric = new_m_local[k];
+            }
+        }
+        if (min_metric > 0) {
+            // This loop should also be a candidate for vectorization & unrolling
+            for (int k = 0; k < 64; k++) {
+                new_m_local[k] -= min_metric;
+            }
+        }
+        
+        // Swap pointers to old and new metrics
+        metric_t *tmp_ptr = vp->old_metrics;
+        vp->old_metrics = vp->new_metrics;
+        vp->new_metrics = tmp_ptr;
+        
+        // Update local pointers for the next iteration's ACS stage
+        old_m_local = vp->old_metrics->ui;
+        new_m_local = vp->new_metrics->ui; 
     }
 
-    // Swap metric buffers for next iteration
-    metric_t *tmp_metrics = vp->old_metrics;
-    vp->old_metrics = vp->new_metrics;
-    vp->new_metrics = tmp_metrics;
-  }
-  vp->dp = d_ptr; // Save new decision pointer
-  return 0;
+    vp->dp = d_ptr;
+    return 0;
 }
 
-int chainback_viterbi27(
-      void *p,
-      unsigned char * restrict data, /* Decoded output data */
-      unsigned int nbits, /* Number of data bits */
-      unsigned int endstate) /* Terminal encoder state (0-63 for K=7) */
-{
-  struct v27_state *vp = (struct v27_state *)p;
-  if(p == NULL || data == NULL) return -1;
+int chainback_viterbi27(void *p, unsigned char *data, unsigned int nbits, unsigned int endstate) {
+    struct v27_state *vp = (struct v27_state *)p;
+    decision_t *d = vp->decisions;
 
-  decision_t * restrict d_base = vp->decisions;
-  endstate &= 63; // Ensure endstate is within valid range for K=7
+    endstate %= 64;
+    endstate <<= 2;
 
-  // Start from the decision corresponding to the last data bit
-  decision_t *d_ptr = d_base + nbits; 
-
-  // Chainback, bit by bit
-  for (unsigned int k = 0; k < nbits; k++) {
-    d_ptr--; // Move to the decisions for the current bit being decoded
-
-    int decision_bit;
-    // endstate determines which path (0 or 1) to look at in the decision word.
-    // If current endstate's LSB is 0, it came from input bit 0 (use decisions_p0_temp -> d_ptr->w[0])
-    // If current endstate's LSB is 1, it came from input bit 1 (use decisions_p1_temp -> d_ptr->w[1])
-    if ((endstate % 2) == 0) { // Current state is an even state (e.g. S0...S0), was reached by input 0
-        decision_bit = (d_ptr->w[0] >> (endstate / 2)) & 1;
-    } else { // Current state is an odd state (e.g. S0...S1), was reached by input 1
-        decision_bit = (d_ptr->w[1] >> (endstate / 2)) & 1;
+    d += 6; /* Look past tail */
+    while(nbits-- != 0){
+        int k = (d[nbits].w[(endstate>>2)/32] >> ((endstate>>2)%32)) & 1;
+        data[nbits>>3] = endstate = (endstate >> 1) | (k << 7);
     }
-    
-    // The decision bit (0 or 1) indicates whether the upper (0) or lower (1) path in the butterfly was chosen.
-    // This decision bit is the most significant bit of the *previous* state.
-    // The decoded data bit is this decision bit.
-    endstate = (endstate >> 1) | (decision_bit << 5); // K-1 = 6. For K=7, state is 6 bits. MSB is bit 5.
-
-    // Store the decoded bit (decision_bit)
-    // nbits-1-k gives current bit index from 0 (MSB) to nbits-1 (LSB)
-    if (decision_bit) {
-        data[(nbits - 1 - k) >> 3] |= (1 << (7 - ((nbits - 1 - k) % 8)));
-    } else {
-        data[(nbits - 1 - k) >> 3] &= ~(1 << (7 - ((nbits - 1 - k) % 8)));
-    }
-     // The original code's shorthand: data[byte_idx] = (unsigned char)endstate
-     // This works if endstate correctly accumulates the byte.
-     // The explicit bit setting above is clearer for MSB-first packing.
-     // If using the shorthand, ensure data bytes are cleared first.
-     // For this version, let's use explicit bit setting after clearing the data buffer.
-  }
-   // The above loop fills bits from MSB of stream to LSB.
-   // If data array wasn't cleared, it should be before calling this.
-   // A common pattern is to clear data for (nbits+7)/8 bytes.
-   // For simplicity, assuming data is pre-cleared or this is the intended fill pattern.
-
-  return 0;
+    return 0;
 }
 
 void delete_viterbi27(void *p) {

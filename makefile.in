@@ -13,7 +13,14 @@ AR = @AR@
 RANLIB = @RANLIB@
 LDFLAGS = @LDFLAGS@
 
-LIBS = @MLIBS@ fec.o sim.o \
+# Corrected CFLAGS - ensure this is what you intend.
+# The -g flag for debugging is often useful during development.
+# You might want to have a separate CFLAGS_DEBUG and CFLAGS_RELEASE
+# or let configure handle optimization levels.
+# For now, I'm keeping your specified flags.
+CFLAGS=@CFLAGS@ -I. -fPIC -Wall -O3 -march=native -mtune=native -ffast-math -funroll-loops
+
+LIBS_OBJ = @MLIBS@ fec.o sim.o \
 	viterbi27_port.o viterbi29_port.o viterbi39_port.o viterbi615_port.o \
 	encode_rs_char.o encode_rs_int.o encode_rs_8.o \
 	decode_rs_char.o decode_rs_int.o decode_rs_8.o \
@@ -21,101 +28,68 @@ LIBS = @MLIBS@ fec.o sim.o \
 	ccsds_tab.o encode_rs_ccsds.o decode_rs_ccsds.o ccsds_tal.o \
 	dotprod_port.o peakval_port.o sumsq_port.o
 
-CFLAGS=@CFLAGS@ -I. -fPIC -Wall -O3 -march=native -mtune=native -ffast-math -funroll-loops
-
 SHARED_LIB=@SH_LIB@
 
 all: libfec.a $(SHARED_LIB)
 
-test: vtest27 vtest29 vtest39 vtest615 rstest  rs_speedtest
-	@echo "Running tests..."
-	./vtest27
-	./vtest29
-	./vtest39
-	./vtest615
-	./rstest
-	./rs_speedtest
-	@echo "Tests finished."
-
-install: all
-<<<<<<< Updated upstream
-	mkdir -p @libdir@ 
-	install -m 644 -p $(SHARED_LIB) libfec.a @libdir@
-#	(cd @libdir@;ln -f -s $(SHARED_LIB) libfec.so)
-	@REBIND@
-	mkdir -p @includedir@
-	install -m 644 -p fec.h @includedir@
-	mkdir -m 0755 -p @mandir@/man3
-	install -m 644 -p simd-viterbi.3 rs.3 dsp.3 @mandir@/man3
-
-peaktest: peaktest.o libfec.a
-	gcc -g -o $@ $^
-
-sumsq_test: sumsq_test.o libfec.a
-	gcc -g -o $@ $^
-
-dtest: dtest.o libfec.a
-	gcc -g -o $@ $^ -lm
-
-vtest27: vtest27.o libfec.a
-	gcc -g -o $@ $^ -lm
-
-vtest29: vtest29.o libfec.a
-	gcc -g -o $@ $^ -lm
-
-vtest39: vtest39.o libfec.a
-	gcc -g -o $@ $^ -lm
-
-vtest615: vtest615.o libfec.a
-	gcc -g -o $@ $^ -lm
-
-rstest: rstest.o libfec.a
-	gcc -g -o $@ $^
-
-rs_speedtest: rs_speedtest.o libfec.a
-	gcc -g -o $@ $^	
-
-# for some reason, the test programs without args segfault on the PPC with -O2 optimization. Dunno why - compiler bug?
-vtest27.o: vtest27.c fec.h
-	gcc -g -c $<
-
-vtest29.o: vtest29.c fec.h
-	gcc -g -c $<
-
-vtest39.o: vtest39.c fec.h
-	gcc -g -c $<
-
-vtest615.o: vtest615.c fec.h
-	gcc -g -c $<
-
-=======
-	mkdir -p $(DESTDIR)@libdir@
-	install -m 644 -p $(SHARED_LIB) libfec.a $(DESTDIR)@libdir@
-	@REBIND@
-	mkdir -p $(DESTDIR)@includedir@
-	install -m 644 -p fec.h $(DESTDIR)@includedir@
-	mkdir -p $(DESTDIR)@mandir@/man3
-	install -m 644 -p simd-viterbi.3 rs.3 dsp.3 $(DESTDIR)@mandir@/man3
-
->>>>>>> Stashed changes
-libfec.a: $(LIBS)
+libfec.a: $(LIBS_OBJ)
 	$(AR) rv $@ $^
 	$(RANLIB) $@
 
 # For Darwin (macOS)
-libfec.dylib: $(LIBS)
-<<<<<<< Updated upstream
-	$(CC) -dynamiclib -install_name $@ -o $@ $^
-=======
-	$(CC) $(LDFLAGS) -dynamiclib -install_name @libdir@/$@ -o $@ $^
->>>>>>> Stashed changes
+libfec.dylib: $(LIBS_OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) -dynamiclib -install_name $(prefix)/lib/$@ -o $@ $^
 
 # For Linux et al
-libfec.so: $(LIBS)
-	$(CC) $(LDFLAGS) -shared -Xlinker -soname=$@ -o $@ -Wl,-whole-archive $^ -Wl,-no-whole-archive -lc
+libfec.so: $(LIBS_OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) -shared -Xlinker -soname=$@ -o $@ -Wl,-whole-archive $^ -Wl,-no-whole-archive -lc
+
+# Generic rule for compiling .c to .o from the source directory
+# This will be used for most library object files if no specific rule exists.
+%.o: $(srcdir)/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# Specific object file rules if they have unique dependencies or commands
+# (Many might be covered by the generic rule above if their .c files are in $(srcdir)
+# and they just need standard compilation)
+
+# Example for a file that might be in current dir or has specific deps:
+# sim.o: sim.c fec.h
+#	$(CC) $(CFLAGS) -c -o $@ $<
+
+# Test program object files
+vtest27.o: vtest27.c fec.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+vtest29.o: vtest29.c fec.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+vtest39.o: vtest39.c fec.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+vtest615.o: vtest615.c fec.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+rstest.o: rstest.c fec.h exercise_rs.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+rs_speedtest.o: rs_speedtest.c fec.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+exercise_rs_char.o: exercise_rs_char.c exercise_rs.h exercise_rs_bc.h exercise.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+exercise_rs_int.o: exercise_rs_int.c exercise_rs.h exercise_rs_bc.h exercise.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+exercise_rs_8.o: exercise_rs_8.c exercise_rs.h exercise_rs_bc.h exercise.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+exercise_rs_ccsds.o: exercise_rs_ccsds.c exercise_rs.h exercise_rs_bc.h exercise.h
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 # CCSDS table generation
-ccsds_tab.o: ccsds_tab.c fec.h
+init_rs_char_local.o: init_rs_char_local.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 ccsds_tab.c: gen_ccsds
@@ -124,29 +98,13 @@ ccsds_tab.c: gen_ccsds
 gen_ccsds: gen_ccsds.o init_rs_char_local.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
-ccsds_tal.o: ccsds_tal.c fec.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
 ccsds_tal.c: gen_ccsds_tal
 	./gen_ccsds_tal > $@
 
-<<<<<<< Updated upstream
-exercise_char.o: exercise.c
-	gcc $(CFLAGS) -c -o $@ $<
-
-exercise_int.o: exercise.c
-	gcc -DBIGSYM=1 $(CFLAGS) -c -o $@ $<
-
-exercise_8.o: exercise.c
-	gcc -DFIXED=1 $(CFLAGS) -c -o $@ $<
-
-exercise_ccsds.o: exercise.c
-	gcc -DCCSDS=1 $(CFLAGS) -c -o $@ $<
-=======
 gen_ccsds_tal: gen_ccsds_tal.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
-# Test executables
+# Test executables linking
 vtest27: vtest27.o libfec.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm
 
@@ -155,7 +113,6 @@ vtest29: vtest29.o libfec.a
 
 vtest39: vtest39.o libfec.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm
->>>>>>> Stashed changes
 
 vtest615: vtest615.o libfec.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm
@@ -163,26 +120,41 @@ vtest615: vtest615.o libfec.a
 rstest: rstest.o exercise_rs_char.o exercise_rs_int.o exercise_rs_8.o exercise_rs_ccsds.o libfec.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
-
 rs_speedtest: rs_speedtest.o libfec.a
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
-# Generic rule for compiling .c to .o
-# Assumes most .c files include fec.h or their necessary headers.
-# For files with more specific dependencies (like RS exercise files or init_rs_char_local),
-# you might need more specific rules if this generic one doesn't trigger rebuilds correctly.
-%.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Specific rule for init_rs_char_local.o if it doesn't depend on fec.h in the same way
-init_rs_char_local.o: init_rs_char_local.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+test: vtest27 vtest29 vtest39 vtest615 rstest rs_speedtest
+	@echo "Running tests..."
+	@echo "Correctness tests:"
+	./vtest27 -e 3.0 -n 1000 -v
+	./vtest29 -e 2.5 -n 1000 -v
+	./vtest39 -e 2.5 -n 1000 -v
+	./vtest615 -e 1.0 -n 100 -v
+	./rstest
+	@echo "Speed tests:"
+	./vtest27
+	./vtest29
+	./vtest39
+	./vtest615
+	./rs_speedtest
+	@echo "Tests finished."
+
+install: all
+	mkdir -p $(DESTDIR)$(libdir)
+	install -m 644 -p $(SHARED_LIB) libfec.a $(DESTDIR)$(libdir)/
+#	(cd $(DESTDIR)$(libdir);ln -f -s $(SHARED_LIB) libfec.so)
+	@REBIND@
+	mkdir -p $(DESTDIR)$(includedir)
+	install -m 644 -p fec.h $(DESTDIR)$(includedir)/
+	mkdir -m 0755 -p $(DESTDIR)$(mandir)/man3
+	install -m 644 -p $(srcdir)/simd-viterbi.3 $(srcdir)/rs.3 $(srcdir)/dsp.3 $(DESTDIR)$(mandir)/man3/
 
 clean:
-	rm -f *.o *.a $(SHARED_LIB) \
+	rm -f *.o *.a $(SHARED_LIB) libfec.dylib libfec.so \
 	vtest27 vtest29 vtest39 vtest615 rstest rs_speedtest \
 	gen_ccsds gen_ccsds_tal ccsds_tab.c ccsds_tal.c core
 	rm -rf autom4te.cache
 
 distclean: clean
-	rm -f config.log config.cache config.status config.h makefile TAGS tags
+	rm -f config.log config.cache config.status config.h Makefile TAGS tags

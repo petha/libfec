@@ -14,7 +14,8 @@ if test "$GCC" != "yes"; then
     AC_MSG_ERROR([Need GNU-compatible C compiler (clang or gcc)])
 fi
 
-AC_PROG_AR
+AC_CHECK_PROGS([AR], [ar])
+
 AC_PROG_RANLIB
 
 dnl Checks for libraries.
