@@ -13,12 +13,12 @@ AR = @AR@
 RANLIB = @RANLIB@
 LDFLAGS = @LDFLAGS@
 
-# Corrected CFLAGS - ensure this is what you intend.
-# The -g flag for debugging is often useful during development.
-# You might want to have a separate CFLAGS_DEBUG and CFLAGS_RELEASE
-# or let configure handle optimization levels.
-# For now, I'm keeping your specified flags.
-CFLAGS=@CFLAGS@ -I. -fPIC -Wall -O3 -march=native -mtune=native -ffast-math -funroll-loops
+# VOLK support
+VOLK_CFLAGS = @VOLK_CFLAGS@
+VOLK_LIBS = @VOLK_LIBS@
+
+# Updated CFLAGS to include VOLK flags
+CFLAGS=@CFLAGS@ -I. -fPIC -Wall -O3 -march=native -mtune=native -ffast-math -funroll-loops $(VOLK_CFLAGS)
 
 LIBS_OBJ = @MLIBS@ fec.o sim.o \
 	viterbi27_port.o viterbi29_port.o viterbi39_port.o viterbi615_port.o \
@@ -36,13 +36,13 @@ libfec.a: $(LIBS_OBJ)
 	$(AR) rv $@ $^
 	$(RANLIB) $@
 
-# For Darwin (macOS)
+# For Darwin (macOS) - include VOLK libs
 libfec.dylib: $(LIBS_OBJ)
-	$(CC) $(CFLAGS) $(LDFLAGS) -dynamiclib -install_name $(prefix)/lib/$@ -o $@ $^
+	$(CC) $(CFLAGS) $(LDFLAGS) -dynamiclib -install_name $(prefix)/lib/$@ -o $@ $^ $(VOLK_LIBS)
 
-# For Linux et al
+# For Linux et al - include VOLK libs
 libfec.so: $(LIBS_OBJ)
-	$(CC) $(CFLAGS) $(LDFLAGS) -shared -Xlinker -soname=$@ -o $@ -Wl,-whole-archive $^ -Wl,-no-whole-archive -lc
+	$(CC) $(CFLAGS) $(LDFLAGS) -shared -Xlinker -soname=$@ -o $@ -Wl,-whole-archive $^ -Wl,-no-whole-archive -lc $(VOLK_LIBS)
 
 # Generic rule for compiling .c to .o from the source directory
 # This will be used for most library object files if no specific rule exists.
@@ -104,24 +104,27 @@ ccsds_tal.c: gen_ccsds_tal
 gen_ccsds_tal: gen_ccsds_tal.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
-# Test executables linking
+# Test executables linking - add VOLK libs where needed
 vtest27: vtest27.o libfec.a
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm $(VOLK_LIBS)
 
 vtest29: vtest29.o libfec.a
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm $(VOLK_LIBS)
 
 vtest39: vtest39.o libfec.a
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm $(VOLK_LIBS)
 
 vtest615: vtest615.o libfec.a
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm $(VOLK_LIBS)
 
 rstest: rstest.o exercise_rs_char.o exercise_rs_int.o exercise_rs_8.o exercise_rs_ccsds.o libfec.a
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(VOLK_LIBS)
 
 rs_speedtest: rs_speedtest.o libfec.a
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(VOLK_LIBS)
+
+profile_viterbi27: profile_viterbi27.o libfec.a
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm $(VOLK_LIBS)
 
 
 test: vtest27 vtest29 vtest39 vtest615 rstest rs_speedtest
@@ -152,7 +155,7 @@ install: all
 
 clean:
 	rm -f *.o *.a $(SHARED_LIB) libfec.dylib libfec.so \
-	vtest27 vtest29 vtest39 vtest615 rstest rs_speedtest \
+	vtest27 vtest29 vtest39 vtest615 rstest rs_speedtest profile_viterbi27 \
 	gen_ccsds gen_ccsds_tal ccsds_tab.c ccsds_tal.c core
 	rm -rf autom4te.cache
 

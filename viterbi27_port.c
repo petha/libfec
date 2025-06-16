@@ -1,255 +1,231 @@
-/* K=7 r=1/2 Viterbi decoder, portable C, optimized for auto-vectorization
- * Based on concepts by Phil Karn, KA9Q, and modern C optimization techniques.
- * May be used under the terms of the GNU Lesser General Public License (LGPL)
+/* K=7 r=1/2 Viterbi decoder using VOLK kernels with portable fallback
+ * Optimized for performance - minimal branching, no debug code
  */
 #include <stdio.h>
 #include <stdlib.h>
-#include <memory.h> // For memset, if used explicitly (not in current version but good include)
-#include <limits.h> // For UINT_MAX if needed, though not directly used here
+#include <memory.h>
+#include <limits.h>
 
-#include "fec.h" // For V27POLYA, V27POLYB, parity(), and API consistency
+#include "config.h"
+#include "fec.h"
 
-// --- OPTIMIZED DATA STRUCTURES ---
-// Path metrics are 'unsigned int' to handle sums of branch metrics (0-510) before normalization.
-// Explicitly align for better SIMD performance. 64-byte alignment is good for AVX512.
-typedef union {
-    unsigned int ui[64]; // K=7 -> 2^(K-1) = 64 states
-    unsigned char c[64 * sizeof(unsigned int)]; // For memset or byte-level access if ever needed
-} __attribute__((aligned(64))) metric_t;
+#ifdef HAVE_VOLK
+#include <volk/volk.h>
+#endif
 
-// Decisions are packed. For K=7, 64 states, we make 32 pairs of decisions per trellis stage.
-// Each decision is 1 bit. We need to store 32 decisions for paths to even states, 32 for odd.
-// Total 64 decisions per stage.
-typedef union {
-    unsigned long w[2]; // Packs 64 decisions if unsigned long is 64-bit (32 per ulong)
-                        // Or use unsigned int w[2] if targetting 32 decisions per word more explicitly
-                        // and packing logic reflects this. The original optimized code used 2 ulongs.
-} __attribute__((aligned(16))) decision_t; // 16 byte alignment is usually fine for this.
+// Branch table storage - 64 bytes total (32 per polynomial)
+static unsigned char Branchtab27_volk[64] __attribute__((aligned(64)));
+static int V27_Init_volk = 0;
 
-// Branch metric table, also aligned. Stores 0 or 255.
-// For K=7, there are 2^(K-2) = 32 unique sets of branch outputs for input bit 0.
-static union branchtab27 {
-    unsigned char c[32];
-} Branchtab27[2] __attribute__((aligned(64)));
-
-static int V27_Init = 0;
-
-// Main state structure, also aligned.
 struct v27_state {
-  metric_t metrics1;
-  metric_t metrics2;
-  decision_t *dp;          // Pointer to current decision write location
-  metric_t *old_metrics, *new_metrics; // Pointers to path metrics, swapped on every bit
-  decision_t *decisions;   // Buffer for all decisions in a block
-  // Store actual polynomials used, in case they are changed from default
-  int polys[2];
+    unsigned char *metrics_X;      // Old metrics (64 bytes, aligned)
+    unsigned char *metrics_Y;      // New metrics (64 bytes, aligned)
+    unsigned char *decisions_volk; // Decision buffer for VOLK
+    unsigned char *dp;             // Current position in decisions
+    int framebits;                 // Frame length info
 };
 
-// --- Function Implementations ---
-
 void set_viterbi27_polynomial(int polys[2]) {
-    for(int state=0; state < 32; state++){
-        Branchtab27[0].c[state] = ((polys[0] < 0) ^ parity((2*state) & abs(polys[0]))) ? 255 : 0;
-        Branchtab27[1].c[state] = ((polys[1] < 0) ^ parity((2*state) & abs(polys[1]))) ? 255 : 0;
+    // Generate branch table in VOLK format
+    // Unroll for better performance
+    for(int state = 0; state < 32; state++) {
+        Branchtab27_volk[state] = ((polys[0] < 0) ^ parity((2*state) & abs(polys[0]))) ? 255 : 0;
+        Branchtab27_volk[32 + state] = ((polys[1] < 0) ^ parity((2*state) & abs(polys[1]))) ? 255 : 0;
     }
-    V27_Init++;
+    V27_Init_volk = 1;
 }
 
 void *create_viterbi27(int len) {
-  struct v27_state *vp;
-
-  if(!V27_Init){
-    // Initialize with default polynomials if not already called by global set_viterbi27_polynomial
-    // This ensures Branchtab is ready even if only  version is used.
-    int default_polys[2] = { V27POLYA, V27POLYB };
-    set_viterbi27_polynomial(default_polys);
-  }
-
-  // Use posix_memalign for guaranteed alignment.
-  if(posix_memalign((void**)&vp, 64, sizeof(struct v27_state))) {
-    perror("posix_memalign for v27_state failed");
-    return NULL;
-  }
-  
-  vp->polys[0] = V27POLYA; // Store default, can be overridden by set_viterbi27_polynomial
-  vp->polys[1] = V27POLYB;
-
-
-  // Align the decisions buffer. len is data bits. Add trellis depth (K-1 = 6) for tail.
-  if(posix_memalign((void**)&vp->decisions, 64, (len + (7-1)) * sizeof(decision_t))){
-    perror("posix_memalign for decisions buffer failed");
-    free(vp);
-    return NULL;
-  }
-
-  // Path metrics are within the struct, already aligned due to struct alignment.
-  // Initialize pointers
-  vp->old_metrics = &vp->metrics1;
-  vp->new_metrics = &vp->metrics2;
-
-  init_viterbi27(vp, 0); // Initialize with starting state 0
-  return vp;
+    struct v27_state *vp;
+    
+    if(!V27_Init_volk) {
+        int default_polys[2] = { V27POLYA, V27POLYB };
+        set_viterbi27_polynomial(default_polys);
+    }
+    
+    // Calculate total memory needed and allocate in one block for better cache locality
+    size_t total_size = sizeof(struct v27_state) + 64 + 64 + ((len + 6) * 8) + 128; // Extra for alignment
+    void *mem_block;
+    
+    if(posix_memalign(&mem_block, 64, total_size)) {
+        return NULL;
+    }
+    
+    // Partition the memory block
+    vp = (struct v27_state *)mem_block;
+    unsigned char *ptr = (unsigned char *)mem_block + sizeof(struct v27_state);
+    
+    // Align to 64-byte boundary
+    ptr = (unsigned char *)(((uintptr_t)ptr + 63) & ~63);
+    vp->metrics_X = ptr;
+    ptr += 64;
+    
+    vp->metrics_Y = ptr;
+    ptr += 64;
+    
+    vp->decisions_volk = ptr;
+    
+    vp->framebits = len;
+    vp->dp = vp->decisions_volk;
+    
+    // Initialize inline
+    memset(vp->metrics_X, 63, 64);
+    vp->metrics_X[0] = 0;
+    
+    return vp;
 }
 
 int init_viterbi27(void *p, int starting_state) {
-  struct v27_state *vp = (struct v27_state *)p;
-  if(p == NULL) return -1;
-  
-  // Initialize path metrics. Set all to a large value.
-  for(int i=0; i<64; i++) {
-    vp->metrics1.ui[i] = 65535 * 2; // A reasonably large value, but not UINT_MAX to allow additions
-  }
-
-  vp->old_metrics = &vp->metrics1;
-  vp->new_metrics = &vp->metrics2;
-  vp->dp = vp->decisions; // Reset decision pointer to start of buffer
-
-  // Set the metric for the known starting state to 0.
-  if (starting_state >=0 && starting_state < 64) {
-    vp->old_metrics->ui[starting_state & 63] = 0;
-  } else {
-    vp->old_metrics->ui[0] = 0; // Default to state 0 if invalid
-  }
-  
-  // Re-initialize branchtabs if polynomials might have changed via a global call
-  // This is a bit tricky; the  version should ideally use its own poly copy.
-  // For now, assume Branchtab is set by create or a global call.
-  // If vp->polys were used to regenerate Branchtab here, it would be instance-specific.
-  // The current design uses global Branchtab27_polyA/B.
-
-  return 0;
+    struct v27_state *vp = (struct v27_state *)p;
+    
+    // Fast path for common case (state 0)
+    memset(vp->metrics_X, 63, 64);
+    vp->metrics_X[starting_state & 63] = 0;
+    vp->dp = vp->decisions_volk;
+    
+    return 0;
 }
-// ... (Keep existing includes, structs, set_viterbi27_polynomial, create_viterbi27, init_viterbi27) ...
-// ... (Ensure Branchtab27, V27_Init, struct v27_state, metric_t, decision_t are defined as in your 26Mbps version) ...
+
+#ifndef HAVE_VOLK
+// Inline portable ACS butterfly for better performance
+static inline void BFLY_portable(int i, unsigned char *syms, unsigned char *Y, 
+                                unsigned char *X, unsigned char *decisions) {
+    // Compute branch metric
+    unsigned int s0 = syms[0] ^ Branchtab27_volk[i];
+    unsigned int s1 = syms[1] ^ Branchtab27_volk[32 + i];
+    unsigned int metric = ((s0 + s1 + 1) >> 3) & 63;
+    
+    // Path metrics
+    unsigned char m0 = X[i] + metric;
+    unsigned char m1 = X[i + 32] + (63 - metric);
+    unsigned char m2 = X[i] + (63 - metric);
+    unsigned char m3 = X[i + 32] + metric;
+    
+    // Decisions and survivors
+    unsigned int decision0 = (m0 > m1);
+    unsigned int decision1 = (m2 > m3);
+    
+    Y[2 * i] = decision0 ? m1 : m0;
+    Y[2 * i + 1] = decision1 ? m3 : m2;
+    
+    // Pack decisions
+    decisions[i >> 2] |= (decision0 << ((2 * i) & 7)) | (decision1 << (((2 * i) + 1) & 7));
+}
+
+static void viterbi27_update_portable(unsigned char *Y, unsigned char *X, 
+                                     unsigned char *syms, unsigned char *dec,
+                                     unsigned int nbits) {
+    unsigned char *tmp;
+    
+    for (unsigned int s = 0; s < nbits; s++) {
+        memset(&dec[s * 8], 0, 8);
+        
+        // Unroll butterfly loop for better performance
+        for (int i = 0; i < 32; i += 4) {
+            BFLY_portable(i, &syms[s * 2], Y, X, &dec[s * 8]);
+            BFLY_portable(i + 1, &syms[s * 2], Y, X, &dec[s * 8]);
+            BFLY_portable(i + 2, &syms[s * 2], Y, X, &dec[s * 8]);
+            BFLY_portable(i + 3, &syms[s * 2], Y, X, &dec[s * 8]);
+        }
+        
+        // Renormalize - find min in one pass
+        unsigned char min = Y[0];
+        for (int i = 1; i < 64; i++) {
+            if (Y[i] < min) min = Y[i];
+        }
+        
+        // Subtract min if needed
+        if (min > 0) {
+            for (int i = 0; i < 64; i += 8) {
+                Y[i] -= min;
+                Y[i + 1] -= min;
+                Y[i + 2] -= min;
+                Y[i + 3] -= min;
+                Y[i + 4] -= min;
+                Y[i + 5] -= min;
+                Y[i + 6] -= min;
+                Y[i + 7] -= min;
+            }
+        }
+        
+        // Swap pointers
+        tmp = X;
+        X = Y;
+        Y = tmp;
+    }
+}
+#endif
 
 int update_viterbi27_blk(void *p, unsigned char * restrict syms, int nbits) {
     struct v27_state *vp = (struct v27_state *)p;
-    if(p == NULL || syms == NULL) return -1;
 
-    decision_t * restrict d_ptr = vp->dp;
-
-    // Use local pointers for frequently accessed data, helps compiler alias analysis
-    const unsigned char * restrict btab0_local = Branchtab27[0].c;
-    const unsigned char * restrict btab1_local = Branchtab27[1].c;
-    unsigned int * restrict old_m_local = vp->old_metrics->ui;
-    unsigned int * restrict new_m_local = vp->new_metrics->ui; // This is the target for ACS
-
-    // Align stack array if desired, though often handled well by modern compilers.
-    unsigned char current_stage_decisions[64] __attribute__((aligned(64))); 
-
-    for (int bit_idx = 0; bit_idx < nbits; ++bit_idx) {
-        const unsigned char s0_input = *syms++; 
-        const unsigned char s1_input = *syms++; 
-
-        // ACS (Add-Compare-Select) Stage
-        // Rely on compiler's default unrolling (e.g., via -funroll-loops with -O3)
-        // Do NOT add a #pragma unroll here initially.
-        #pragma clang loop vectorize(enable)
-        #pragma clang loop interleave(enable) 
-        for(int i = 0; i < 32; i++) {
-            // --- Load phase ---
-            unsigned int prev_metric_state_i    = old_m_local[i];
-            unsigned int prev_metric_state_i32  = old_m_local[i+32];
-            unsigned char branch_xor_mask_polyA = btab0_local[i];
-            unsigned char branch_xor_mask_polyB = btab1_local[i];
-
-            // --- Branch metric calculation phase ---
-            unsigned int xor_result_A = (unsigned int)(branch_xor_mask_polyA ^ s0_input);
-            unsigned int xor_result_B = (unsigned int)(branch_xor_mask_polyB ^ s1_input);
-            
-            unsigned int branch_metric_fwd  = xor_result_A + xor_result_B;
-            unsigned int branch_metric_comp = 510 - branch_metric_fwd; // Max bm_fwd is 510
-
-            // --- Path 1 (computations for next state 2*i) ---
-            unsigned int path1_metric_from_state_i   = prev_metric_state_i + branch_metric_fwd;
-            unsigned int path1_metric_from_state_i32 = prev_metric_state_i32 + branch_metric_comp;
-            
-            // Decision: 1 if path from state_i32 is chosen (i.e., if its metric is smaller)
-            unsigned int path1_decision  = (path1_metric_from_state_i > path1_metric_from_state_i32); 
-            unsigned int path1_survivor_metric = path1_decision ? path1_metric_from_state_i32 : path1_metric_from_state_i;
-
-            // --- Path 2 (computations for next state 2*i+1) ---
-            unsigned int path2_metric_from_state_i   = prev_metric_state_i + branch_metric_comp;
-            unsigned int path2_metric_from_state_i32 = prev_metric_state_i32 + branch_metric_fwd;
-
-            // Decision: 1 if path from state_i32 is chosen (i.e., if its metric is smaller)
-            unsigned int path2_decision  = (path2_metric_from_state_i > path2_metric_from_state_i32);
-            unsigned int path2_survivor_metric = path2_decision ? path2_metric_from_state_i32 : path2_metric_from_state_i;
-
-            // --- Store phase (interleaved) ---
-            new_m_local[2*i]       = path1_survivor_metric;
-            current_stage_decisions[2*i] = (unsigned char)path1_decision;
-
-            new_m_local[2*i+1]     = path2_survivor_metric;
-            current_stage_decisions[2*i+1] = (unsigned char)path2_decision;
-        }
-
-        // Pack decisions from current_stage_decisions into d_ptr->w
-        // (This packing logic is from your 26Mbps version - assumed correct)
-        unsigned long packed_w0 = 0;
-        unsigned long packed_w1 = 0;
-        for (int k = 0; k < 32; ++k) {
-            if (current_stage_decisions[k]) {
-                packed_w0 |= (1UL << k);
-            }
-        }
-        for (int k = 0; k < 32; ++k) {
-            if (current_stage_decisions[32 + k]) {
-                packed_w1 |= (1UL << k);
-            }
-        }
-        d_ptr->w[0] = packed_w0;
-        d_ptr->w[1] = packed_w1;
-        d_ptr++;
-
-        // Metric Normalization Stage (using new_m_local)
-        unsigned int min_metric = new_m_local[0];
-        for (int k = 1; k < 64; k++) {
-            if (new_m_local[k] < min_metric) {
-                min_metric = new_m_local[k];
-            }
-        }
-        if (min_metric > 0) {
-            // This loop should also be a candidate for vectorization & unrolling
-            for (int k = 0; k < 64; k++) {
-                new_m_local[k] -= min_metric;
-            }
-        }
-        
-        // Swap pointers to old and new metrics
-        metric_t *tmp_ptr = vp->old_metrics;
-        vp->old_metrics = vp->new_metrics;
-        vp->new_metrics = tmp_ptr;
-        
-        // Update local pointers for the next iteration's ACS stage
-        old_m_local = vp->old_metrics->ui;
-        new_m_local = vp->new_metrics->ui; 
+#ifdef HAVE_VOLK
+    volk_8u_x4_conv_k7_r2_8u(
+        vp->metrics_Y,      
+        vp->metrics_X,      
+        syms,               
+        vp->dp,             
+        nbits,              
+        0,                  
+        Branchtab27_volk    
+    );
+    vp->dp += nbits * 8;
+#else
+    viterbi27_update_portable(vp->metrics_Y, vp->metrics_X, syms, vp->dp, nbits);
+    if (nbits & 1) {
+        unsigned char *tmp = vp->metrics_X;
+        vp->metrics_X = vp->metrics_Y;
+        vp->metrics_Y = tmp;
     }
-
-    vp->dp = d_ptr;
+    vp->dp += nbits * 8;
+#endif
+    
     return 0;
 }
 
 int chainback_viterbi27(void *p, unsigned char *data, unsigned int nbits, unsigned int endstate) {
     struct v27_state *vp = (struct v27_state *)p;
-    decision_t *d = vp->decisions;
-
-    endstate %= 64;
-    endstate <<= 2;
-
-    d += 6; /* Look past tail */
-    while(nbits-- != 0){
-        int k = (d[nbits].w[(endstate>>2)/32] >> ((endstate>>2)%32)) & 1;
-        data[nbits>>3] = endstate = (endstate >> 1) | (k << 7);
+    unsigned char *d = vp->decisions_volk;
+    
+    endstate &= 63;
+    memset(data, 0, (nbits + 7) / 8);
+    
+    // Process tail bits - unrolled for performance
+    int idx = nbits + 5;
+    endstate = ((endstate >> 1) | (((d[(idx << 3) + (endstate >> 3)] >> (endstate & 7)) & 1) << 5)) & 63;
+    idx--;
+    endstate = ((endstate >> 1) | (((d[(idx << 3) + (endstate >> 3)] >> (endstate & 7)) & 1) << 5)) & 63;
+    idx--;
+    endstate = ((endstate >> 1) | (((d[(idx << 3) + (endstate >> 3)] >> (endstate & 7)) & 1) << 5)) & 63;
+    idx--;
+    endstate = ((endstate >> 1) | (((d[(idx << 3) + (endstate >> 3)] >> (endstate & 7)) & 1) << 5)) & 63;
+    idx--;
+    endstate = ((endstate >> 1) | (((d[(idx << 3) + (endstate >> 3)] >> (endstate & 7)) & 1) << 5)) & 63;
+    idx--;
+    endstate = ((endstate >> 1) | (((d[(idx << 3) + (endstate >> 3)] >> (endstate & 7)) & 1) << 5)) & 63;
+    
+    // Main traceback loop - optimized with prefetching
+    for(int i = nbits - 1; i >= 0; i--) {
+        #ifdef __builtin_prefetch
+        if (i >= 16) __builtin_prefetch(&d[(i-16) << 3], 0, 1);
+        #endif
+        
+        int dec_byte_offset = i << 3;
+        int byte_idx = endstate >> 3;
+        int bit_idx = endstate & 7;
+        
+        // Branchless bit storage
+        data[i >> 3] |= ((endstate & 1) << (7 - (i & 7)));
+        
+        // Update state
+        int decision = (d[dec_byte_offset + byte_idx] >> bit_idx) & 1;
+        endstate = ((endstate >> 1) | (decision << 5)) & 63;
     }
+    
     return 0;
 }
 
 void delete_viterbi27(void *p) {
-  struct v27_state *vp = (struct v27_state *)p;
-  if(vp != NULL){
-    free(vp->decisions); // Free the aligned decisions buffer
-    free(vp);            // Free the main state structure
-  }
-  // V27_Init and Branchtab are static/global, not freed here.
+    // Only need one free since we allocated as a single block
+    free(p);
 }

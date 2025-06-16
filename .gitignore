@@ -46,68 +46,142 @@ m4/ltsugar.m4
 m4/ltversion.m4
 m4/lt~obsolete.m4
 
-# Generated Makefile
-# (meta build system like autotools,
-# can automatically generate from config.status script
-# (which is called by configure script))
-Makefile
-
-# Prerequisites
-*.d
-
-# Object files
+# Build outputs
 *.o
-*.ko
-*.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
 *.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
 *.so
 *.so.*
 *.dylib
+*.dll
+*.lo
+*.la
 
 # Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+vtest27
+vtest29
+vtest39
+vtest615
+rstest
+rs_speedtest
+profile_viterbi27
+gen_ccsds
+gen_ccsds_tal
+
+# Generated source files
+ccsds_tab.c
+ccsds_tal.c
+
+# Autotools generated files
+Makefile
+makefile
+config.h
+config.h.in
+config.log
+config.status
+config.cache
+configure
+autom4te.cache/
+aclocal.m4
+compile
+config.guess
+config.sub
+depcomp
+install-sh
+ltmain.sh
+missing
+stamp-h1
+.deps/
+.libs/
+.dirstamp
+libtool
+m4/
+
+# Editor and IDE files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-*
+.DS_Store
+Thumbs.db
+*.bak
+*.orig
+*.rej
 
 # Debug files
+core
+*.core
+vgcore.*
 *.dSYM/
 *.su
 *.idb
 *.pdb
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# Profiling data
+gmon.out
+*.gcda
+*.gcno
+*.gcov
+callgrind.out.*
+perf.data
+perf.data.old
+cachegrind.out.*
 
-# debug information files
-*.dwo
+# Test outputs
+*.log
+test-results/
+test-suite.log
 
-# Remve temopary files and tildes 
+# Tags
+TAGS
+tags
+.tags
+cscope.*
+GPATH
+GRTAGS
+GTAGS
+
+# Distribution archives
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.zip
+libfec-*.tar.*
+
+# Documentation build
+doc/html/
+doc/latex/
+*.pdf
+Doxyfile
+
+# Temporary files
+.tmp/
+tmp/
+temp/
 *.tmp
-*~
+
+# Python cache (if any Python scripts are added)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# macOS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux specific
+.directory
+.Trash-*
+
+# Windows specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp

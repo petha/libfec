@@ -20,6 +20,7 @@ struct option Options[] = {
   {"ebn0",1,NULL,'e'},
   {"gain",1,NULL,'g'},
   {"verbose",0,NULL,'v'},
+  {"debug",1,NULL,'d'},
   {NULL},
 };
 #endif
@@ -45,14 +46,15 @@ int main(int argc,char *argv[]){
   double gain,esn0,ebn0;
   time_t t;
   int badframes=0;
+  int debug_level = 0;
 
   time(&t);
   srandom(t);
   ebn0 = -100;
 #if HAVE_GETOPT_LONG
-  while((d = getopt_long(argc,argv,"l:n:te:g:vapmst",Options,NULL)) != EOF){
+  while((d = getopt_long(argc,argv,"l:n:te:g:vd:apmst",Options,NULL)) != EOF){
 #else
-  while((d = getopt(argc,argv,"l:n:te:g:vapmst")) != EOF){
+  while((d = getopt(argc,argv,"l:n:te:g:vd:apmst")) != EOF){
 #endif
     switch(d){
     case 'l':
@@ -69,6 +71,10 @@ int main(int argc,char *argv[]){
       break;
     case 'v':
       Verbose++;
+      break;
+    case 'd':
+      debug_level = atoi(optarg);
+      setenv("VITERBI_DEBUG", optarg, 1);
       break;
     }
   }
@@ -97,9 +103,28 @@ int main(int argc,char *argv[]){
 	
 	sr = (sr << 1) | bit;
 	bits[i/8] = sr & 0xff;
+        
+        // Ensure symbols are properly formatted for VOLK (0 or 255)
+        // The addnoise function should already produce values in 0-255 range
 	symbols[2*i+0] = addnoise(parity(sr & V27POLYA),gain,Gain,127.5,255);
 	symbols[2*i+1] = addnoise(parity(sr & V27POLYB),gain,Gain,127.5,255);
       }
+      
+      if (debug_level >= 2 && tr == 0) {
+        printf("\nFirst frame encoding:\n");
+        printf("First 16 input bits: ");
+        for (i = 0; i < 16 && i < framebits; i++) {
+          printf("%d", (bits[i/8] >> (7 - (i & 7))) & 1);
+        }
+        printf("\n");
+        printf("First 16 symbol pairs: ");
+        for (i = 0; i < 16; i++) {
+          printf("(%3d,%3d) ", symbols[2*i], symbols[2*i+1]);
+          if ((i & 3) == 3) printf("\n                      ");
+        }
+        printf("\n");
+      }
+      
       /* Decode it and make sure we get the right answer */
       /* Initialize Viterbi decoder */
       init_viterbi27(vp,0);
@@ -109,6 +134,16 @@ int main(int argc,char *argv[]){
       
       /* Do Viterbi chainback */
       chainback_viterbi27(vp,data,framebits,0);
+      
+      if (debug_level >= 2 && tr == 0) {
+        printf("\nFirst frame decoding:\n");
+        printf("First 16 decoded bits: ");
+        for (i = 0; i < 16 && i < framebits; i++) {
+          printf("%d", (data[i/8] >> (7 - (i & 7))) & 1);
+        }
+        printf("\n");
+      }
+      
       errcnt = 0;
       for(i=0;i<framebits/8;i++){
 	int e = Bitcnt[xordata[i] = data[i] ^ bits[i]];
@@ -140,25 +175,47 @@ int main(int argc,char *argv[]){
       printf("\n");
 
   } else {
-    /* Do time trials */
+    /* Do time trials with profiling */
+    struct timeval tv_start, tv_end;
+    double time_init = 0, time_update = 0, time_chainback = 0;
+    
     memset(symbols,127,sizeof(symbols));
-    printf("Starting time trials\n");
+    printf("Starting time trials with profiling\n");
+    
     getrusage(RUSAGE_SELF,&start);
     for(tr=0;tr < trials;tr++){
-      /* Initialize Viterbi decoder */
+      /* Time init_viterbi27 */
+      gettimeofday(&tv_start, NULL);
       init_viterbi27(vp,0);
+      gettimeofday(&tv_end, NULL);
+      time_init += (tv_end.tv_sec - tv_start.tv_sec) + 1e-6 * (tv_end.tv_usec - tv_start.tv_usec);
       
-      /* Decode block */
+      /* Time update_viterbi27_blk */
+      gettimeofday(&tv_start, NULL);
       update_viterbi27_blk(vp,symbols,framebits);
+      gettimeofday(&tv_end, NULL);
+      time_update += (tv_end.tv_sec - tv_start.tv_sec) + 1e-6 * (tv_end.tv_usec - tv_start.tv_usec);
       
-      /* Do Viterbi chainback */
+      /* Time chainback_viterbi27 */
+      gettimeofday(&tv_start, NULL);
       chainback_viterbi27(vp,data,framebits,0);
+      gettimeofday(&tv_end, NULL);
+      time_chainback += (tv_end.tv_sec - tv_start.tv_sec) + 1e-6 * (tv_end.tv_usec - tv_start.tv_usec);
     }
     getrusage(RUSAGE_SELF,&finish);
+    
     extime = finish.ru_utime.tv_sec - start.ru_utime.tv_sec + 1e-6*(finish.ru_utime.tv_usec - start.ru_utime.tv_usec);
-    printf("Execution time for %d %d-bit frames: %.2f sec\n",trials,
-	   framebits,extime);
+    printf("Execution time for %d %d-bit frames: %.2f sec\n",trials,framebits,extime);
     printf("decoder speed: %g bits/s\n",trials*framebits/extime);
+    
+    printf("\nProfiling breakdown:\n");
+    printf("  init_viterbi27:      %.3f sec (%.1f%%)\n", time_init, 100.0 * time_init / extime);
+    printf("  update_viterbi27_blk: %.3f sec (%.1f%%)\n", time_update, 100.0 * time_update / extime);
+    printf("  chainback_viterbi27:  %.3f sec (%.1f%%)\n", time_chainback, 100.0 * time_chainback / extime);
+    printf("  Total measured:       %.3f sec\n", time_init + time_update + time_chainback);
+    printf("  Overhead:             %.3f sec (%.1f%%)\n", 
+           extime - (time_init + time_update + time_chainback),
+           100.0 * (extime - (time_init + time_update + time_chainback)) / extime);
   }
   exit(0);
 }

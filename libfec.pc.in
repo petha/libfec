@@ -1,0 +1,12 @@
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+
+Name: libfec
+Description: Forward Error Correction Library with VOLK acceleration
+Version: @VERSION@
+Requires: @VOLK_REQUIRES@
+Libs: -L${libdir} -lfec
+Libs.private: @LIBS@ @VOLK_LIBS@
+Cflags: -I${includedir} @VOLK_CFLAGS@
