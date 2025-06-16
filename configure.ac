@@ -11,6 +11,15 @@ VERSION=3.0.0
 AC_SUBST(SO_NAME, [3])
 AC_SUBST(VERSION)
 
+dnl Set installation directories
+AC_PREFIX_DEFAULT([/usr/local])
+AC_SUBST(prefix)
+AC_SUBST(exec_prefix)
+AC_SUBST(libdir)
+AC_SUBST(includedir)
+AC_SUBST(mandir)
+AC_SUBST(datarootdir)
+
 dnl Checks for programs.
 AC_PROG_CC([clang gcc cc])
 if test "$GCC" != "yes"; then

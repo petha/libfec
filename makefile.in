@@ -7,6 +7,23 @@ srcdir = @srcdir@
 prefix = @prefix@
 exec_prefix = @exec_prefix@
 datarootdir = @datarootdir@
+
+# Set default values if not provided by configure
+libdir = @libdir@
+includedir = @includedir@
+mandir = @mandir@
+
+# If still empty, use defaults
+ifeq ($(libdir),)
+libdir = $(exec_prefix)/lib
+endif
+ifeq ($(includedir),)
+includedir = $(prefix)/include
+endif
+ifeq ($(mandir),)
+mandir = $(datarootdir)/man
+endif
+
 VPATH = @srcdir@
 CC=@CC@
 AR = @AR@
@@ -150,7 +167,7 @@ install: all
 	@REBIND@
 	mkdir -p $(DESTDIR)$(includedir)
 	install -m 644 -p fec.h $(DESTDIR)$(includedir)/
-	mkdir -m 0755 -p $(DESTDIR)$(mandir)/man3
+	mkdir -p $(DESTDIR)$(mandir)/man3
 	install -m 644 -p $(srcdir)/simd-viterbi.3 $(srcdir)/rs.3 $(srcdir)/dsp.3 $(DESTDIR)$(mandir)/man3/
 
 clean:
