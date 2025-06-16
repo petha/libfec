@@ -75,26 +75,13 @@ ccsds_tal.c
 Makefile
 makefile
 config.h
-config.h.in
 config.log
 config.status
 config.cache
-configure
 autom4te.cache/
-aclocal.m4
-compile
-config.guess
-config.sub
-depcomp
-install-sh
-ltmain.sh
-missing
 stamp-h1
 .deps/
 .libs/
-.dirstamp
-libtool
-m4/
 
 # Editor and IDE files
 *.swp
@@ -105,19 +92,32 @@ m4/
 *.sublime-*
 .DS_Store
 Thumbs.db
-*.bak
-*.orig
-*.rej
 
 # Debug files
 core
 *.core
 vgcore.*
 *.dSYM/
-*.su
-*.idb
-*.pdb
 
+# Profiling data
+gmon.out
+*.gcda
+*.gcno
+*.gcov
+callgrind.out.*
+perf.data
+
+# Tags
+TAGS
+tags
+.tags
+cscope.*
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+*.rej
 # Profiling data
 gmon.out
 *.gcda
