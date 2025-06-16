@@ -7,8 +7,12 @@ echo "Building libfec..."
 
 # Generate configure if needed
 if [ ! -f configure ]; then
-    echo "Running autoconf..."
-    autoconf
+    echo "Running autoreconf..."
+    autoreconf -fiv || {
+        echo "autoreconf failed. Trying with simpler configure.ac..."
+        # Fall back to simple autoconf if autoreconf fails
+        autoconf
+    }
 fi
 
 # Configure

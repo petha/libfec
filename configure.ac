@@ -23,20 +23,27 @@ AC_PROG_RANLIB
 dnl Checks for libraries.
 AC_CHECK_LIB([c], [malloc])
 
-dnl Check for pkg-config
-PKG_PROG_PKG_CONFIG
+dnl Check for pkg-config first
+AC_CHECK_PROG([PKG_CONFIG], [pkg-config], [yes], [no])
 
 dnl Check for VOLK library
-PKG_CHECK_MODULES([VOLK], [volk >= 2.0], [
-    AC_DEFINE([HAVE_VOLK], [1], [Define to 1 if VOLK is available])
-    AC_MSG_NOTICE([VOLK found, enabling VOLK acceleration])
-    VOLK_FOUND=yes
-], [
-    AC_MSG_WARN([VOLK not found. Viterbi decoder will use portable implementation])
+if test "$PKG_CONFIG" = "yes"; then
+    PKG_CHECK_MODULES([VOLK], [volk >= 2.0], [
+        AC_DEFINE([HAVE_VOLK], [1], [Define to 1 if VOLK is available])
+        AC_MSG_NOTICE([VOLK found, enabling VOLK acceleration])
+        VOLK_FOUND=yes
+    ], [
+        AC_MSG_WARN([VOLK not found. Viterbi decoder will use portable implementation])
+        VOLK_FOUND=no
+        VOLK_CFLAGS=""
+        VOLK_LIBS=""
+    ])
+else
+    AC_MSG_WARN([pkg-config not found. Cannot check for VOLK. Using portable implementation])
     VOLK_FOUND=no
     VOLK_CFLAGS=""
     VOLK_LIBS=""
-])
+fi
 
 AC_SUBST(VOLK_CFLAGS)
 AC_SUBST(VOLK_LIBS)
